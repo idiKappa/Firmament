@@ -70,7 +70,15 @@ object RepoManager {
 
 	val currentDownloadedSha by RepoDownloadManager::latestSavedVersionHash
 
+	private const val REI_RELOAD_DEBOUNCE_TICKS = 40
+	private const val REI_RELOAD_RETRY_TICKS = 20
 	var recentlyFailedToUpdateItemList = false
+	private var reiReloadDelayTicks = 0
+
+	private fun scheduleDeferredReiReload() {
+		recentlyFailedToUpdateItemList = true
+		reiReloadDelayTicks = REI_RELOAD_DEBOUNCE_TICKS
+	}
 
 	val essenceRecipeProvider = EssenceRecipeProvider()
 	val recipeCache = BetterRepoRecipeCache(essenceRecipeProvider, ReforgeStore)
@@ -96,10 +104,11 @@ object RepoManager {
 			registerReloadListener {
 				if (TestUtil.isInTest) return@registerReloadListener
 				Firmament.coroutineScope.launch(MinecraftDispatcher) {
-					if (!trySendClientboundUpdateRecipesPacket()) {
-						logger.warn("Failed to issue a ClientboundUpdateRecipesPacket (to reload REI). This may lead to an outdated item list.")
-						recentlyFailedToUpdateItemList = true
-					}
+					// REI 26.2 may still be initializing its registry provider while a world is
+					// being joined. Triggering its synthetic recipe refresh immediately can race
+					// the server's tag/recipe packets. Coalesce repo reloads and wait for a
+					// short period of stable level ticks before asking REI to refresh.
+					scheduleDeferredReiReload()
 				}
 			}
 		}
@@ -114,15 +123,27 @@ object RepoManager {
 	fun getUsagesFor(skyblockId: SkyblockId): Set<NEURecipe> = recipeCache.usages[skyblockId] ?: setOf()
 
 	private fun trySendClientboundUpdateRecipesPacket(): Boolean {
-		return Minecraft.getInstance().level != null && Minecraft.getInstance().connection?.handleUpdateRecipes(
+		val minecraft = Minecraft.getInstance()
+		val connection = minecraft.connection ?: return false
+		if (minecraft.level == null || minecraft.gameMode == null) return false
+		return connection.handleUpdateRecipes(
 			ClientboundUpdateRecipesPacket(mutableMapOf(), SelectableRecipe.SingleInputSet.empty())
 		) != null
 	}
 
 	init {
 		ClientTickEvents.START_LEVEL_TICK.register(ClientTickEvents.StartLevelTick {
-			if (recentlyFailedToUpdateItemList && trySendClientboundUpdateRecipesPacket())
-				recentlyFailedToUpdateItemList = false
+			if (recentlyFailedToUpdateItemList) {
+				if (reiReloadDelayTicks > 0) {
+					reiReloadDelayTicks--
+				} else if (trySendClientboundUpdateRecipesPacket()) {
+					recentlyFailedToUpdateItemList = false
+				} else {
+					// The connection/registries are not ready yet. Retry at a bounded cadence
+					// rather than hammering REI on every client tick.
+					reiReloadDelayTicks = REI_RELOAD_RETRY_TICKS
+				}
+			}
 		})
 	}
 
