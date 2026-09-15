@@ -52,8 +52,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rm -f build/libs/*sources*.jar build/libs/*-api.jar build/libs/*-slim.jar
-          JAR="$(find build/libs -maxdepth 1 -type f -name 'Firmament-*.jar' | head -n 1)"
+          JAR="$(find build/libs -maxdepth 1 -type f -name 'Firmament-*-obfuscated.jar' | head -n 1)"
           test -n "$JAR"
           echo "JAR=$JAR" >> "$GITHUB_ENV"
           echo "Production jar: $JAR"
