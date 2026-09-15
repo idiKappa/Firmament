@@ -56,15 +56,25 @@ jobs:
           test -n "$JAR"
           echo "JAR=$JAR" >> "$GITHUB_ENV"
           echo "Production jar: $JAR"
-          echo "--- fabric.mod.json ---"
-          unzip -p "$JAR" fabric.mod.json
-          unzip -p "$JAR" fabric.mod.json | grep -q '"id": "taument"'
-          unzip -p "$JAR" fabric.mod.json | grep -q '"minecraft": ">=26.2"'
-          if jar tf "$JAR" | grep -q 'ModAnnouncer'; then
-            echo 'ERROR: ModAnnouncer is present in production JAR'
-            exit 1
-          fi
-          jar tf "$JAR" | grep -q 'moe/nea/firmament/mixins/ScreenChangeEventPatch.class'
+          python3 - "$JAR" <<'PY'
+          import json
+          import sys
+          import zipfile
+
+          jar = sys.argv[1]
+          with zipfile.ZipFile(jar) as zf:
+              names = set(zf.namelist())
+              meta = json.loads(zf.read("fabric.mod.json"))
+              print("--- fabric.mod.json ---")
+              print(json.dumps(meta, indent=2))
+              assert meta.get("id") == "taument", f"unexpected mod id: {meta.get('id')!r}"
+              minecraft = meta.get("depends", {}).get("minecraft")
+              assert minecraft == ">=26.2", f"unexpected Minecraft dependency: {minecraft!r}"
+              assert not any("ModAnnouncer" in name for name in names), "ModAnnouncer is present in production JAR"
+              assert "firmament.mixins.json" in names, "firmament.mixins.json missing"
+              assert "moe/nea/firmament/mixins/ScreenChangeEventPatch.class" in names, "ScreenChangeEventPatch missing"
+              print("Validated: taument, Minecraft >=26.2, no ModAnnouncer, mixin class present")
+          PY
           echo "--- SHA-256 ---"
           sha256sum "$JAR"
 
