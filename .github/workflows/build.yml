@@ -26,15 +26,65 @@ jobs:
             -   name: Build with gradle
                 run: |
                     ./gradlew build
-            -   name: Move build artifact around and print check sum
+            -   name: Compare production Mixin packaging
                 run: |
+                    set -euo pipefail
                     rm -f build/libs/*sources*.jar build/libs/*-api.jar
+
+                    curl -fL \
+                      'https://github.com/FirmamentMC/Firmament/releases/download/44.3.0%2Bmc26.1/Firmament-44.3.0%2Bmc26.1.2.jar' \
+                      -o /tmp/official.jar
+                    curl -fL \
+                      'https://github.com/einekratzekatze/Firmament/releases/download/44.2.0%2Bmc26.1.2-taunahi/Firmament-44.2.0%2Bmc26.1.2.jar' \
+                      -o /tmp/old-taunahi.jar
+
+                    echo '=== OFFICIAL 44.3 MIXIN CONFIG ==='
+                    unzip -p /tmp/official.jar firmament.mixins.json || true
+                    echo
+                    echo '=== OFFICIAL MIXIN FILES ==='
+                    unzip -l /tmp/official.jar | grep -Ei 'refmap|firmament.mixins|ScreenChangeEventPatch' || true
+
+                    echo '=== OLD TAUNAHI 44.2 MIXIN CONFIG ==='
+                    unzip -p /tmp/old-taunahi.jar firmament.mixins.json || true
+                    echo
+                    echo '=== OLD TAUNAHI MIXIN FILES ==='
+                    unzip -l /tmp/old-taunahi.jar | grep -Ei 'refmap|firmament.mixins|ScreenChangeEventPatch' || true
+
+                    echo '=== NEW BUILD MIXIN CONFIG/FILES ==='
+                    for jar in build/libs/Firmament-*.jar; do
+                        echo "--- $jar ---"
+                        unzip -p "$jar" firmament.mixins.json || true
+                        echo
+                        unzip -l "$jar" | grep -Ei 'refmap|firmament.mixins|ScreenChangeEventPatch' || true
+                    done
+
+                    mkdir -p /tmp/mixin-classes/official /tmp/mixin-classes/old /tmp/mixin-classes/new
+                    (cd /tmp/mixin-classes/official && unzip -o /tmp/official.jar '*ScreenChangeEventPatch*.class' >/dev/null || true)
+                    (cd /tmp/mixin-classes/old && unzip -o /tmp/old-taunahi.jar '*ScreenChangeEventPatch*.class' >/dev/null || true)
+                    for jar in build/libs/Firmament-*.jar; do
+                        (cd /tmp/mixin-classes/new && unzip -o "$GITHUB_WORKSPACE/$jar" '*ScreenChangeEventPatch*.class' >/dev/null || true)
+                    done
+                    echo '=== SCREEN PATCH STRINGS ==='
+                    echo '-- official --'
+                    find /tmp/mixin-classes/official -type f -print -exec strings {} \; || true
+                    echo '-- old taunahi --'
+                    find /tmp/mixin-classes/old -type f -print -exec strings {} \; || true
+                    echo '-- new build --'
+                    find /tmp/mixin-classes/new -type f -print -exec strings {} \; || true
+
                     sha256sum build/libs/*.jar
             -   name: Upload build artifact
                 uses: actions/upload-artifact@v4
                 with:
                     name: built-mod-jar
                     path: build/libs/Firmament-*.jar
+            -   name: Upload diagnostic reference jars
+                uses: actions/upload-artifact@v4
+                with:
+                    name: reference-jars
+                    path: |
+                        /tmp/official.jar
+                        /tmp/old-taunahi.jar
 
     test:
         name: Test
