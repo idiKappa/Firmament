@@ -1,0 +1,77 @@
+# SPDX-FileCopyrightText: 2024 Linnea Gräf <nea@nea.moe>
+#
+# SPDX-License-Identifier: CC0-1.0
+
+name: Build Taunahi mc26.2
+
+on:
+  push:
+    branches:
+      - taunahi-mc26.2-final
+  pull_request:
+    branches:
+      - taunahi-mc26.2-work
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-taunahi:
+    name: Build obfuscated Taument for Minecraft 26.2
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Set up Zulu JDK 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: zulu
+          java-version: 25
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
+          add-job-summary-as-pr-comment: never
+
+      - name: Apply Taunahi build patches
+        run: python3 scripts/apply-taunahi-ci-patches.py
+
+      - name: Prepare unpacked jars
+        run: ./gradlew unpackAllJars
+
+      - name: Build with Gradle and ProGuard
+        run: ./gradlew build
+
+      - name: Select and validate production JAR
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f build/libs/*sources*.jar build/libs/*-api.jar build/libs/*-slim.jar
+          JAR="$(find build/libs -maxdepth 1 -type f -name 'Firmament-*.jar' | head -n 1)"
+          test -n "$JAR"
+          echo "JAR=$JAR" >> "$GITHUB_ENV"
+          echo "Production jar: $JAR"
+          echo "--- fabric.mod.json ---"
+          unzip -p "$JAR" fabric.mod.json
+          unzip -p "$JAR" fabric.mod.json | grep -q '"id": "taument"'
+          unzip -p "$JAR" fabric.mod.json | grep -q '"minecraft": ">=26.2"'
+          if jar tf "$JAR" | grep -q 'ModAnnouncer'; then
+            echo 'ERROR: ModAnnouncer is present in production JAR'
+            exit 1
+          fi
+          jar tf "$JAR" | grep -q 'moe/nea/firmament/mixins/ScreenChangeEventPatch.class'
+          echo "--- SHA-256 ---"
+          sha256sum "$JAR"
+
+      - name: Upload Taunahi mc26.2 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: taument-mc26.2-obfuscated
+          path: ${{ env.JAR }}
+          if-no-files-found: error
