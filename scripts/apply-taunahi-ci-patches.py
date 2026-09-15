@@ -42,7 +42,9 @@ proguard_task = r'''val obfuscateJar by tasks.registering(ProGuardTask::class) {
 		jmodFiles.forEach { libraryjars(mapOf("jarfilter" to "!**.jar,!module-info.class"), it) }
 	}
 
-	outjars(layout.buildDirectory.file("libs/${base.archivesName.get()}-${version}.jar"))
+	// ProGuard cannot use the same path for input and output. shadowJar writes
+	// Firmament-${version}.jar, so keep the obfuscated artifact separate.
+	outjars(layout.buildDirectory.file("libs/${base.archivesName.get()}-${version}-obfuscated.jar"))
 	configuration(project.file("proguard.pro"))
 }
 
