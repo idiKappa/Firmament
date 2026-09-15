@@ -26,9 +26,26 @@ jobs:
             -   name: Build with gradle
                 run: |
                     ./gradlew build
-            -   name: Move build artifact around and print check sum
+            -   name: Restore runtime Mixin refmap and print checksum
                 run: |
+                    set -euo pipefail
                     rm -f build/libs/*sources*.jar build/libs/*-api.jar
+
+                    # The Taunahi/ProGuard output currently drops the Loom-generated
+                    # refmap even though firmament.mixins.json still references it.
+                    # Restore the refmap from the matching official 44.3.0 mc26.1.2
+                    # release; the mixin sources/targets are the upstream 44.3.0 ones.
+                    curl -fL \
+                      'https://github.com/FirmamentMC/Firmament/releases/download/44.3.0%2Bmc26.1/Firmament-44.3.0%2Bmc26.1.2.jar' \
+                      -o /tmp/firmament-official.jar
+                    unzip -p /tmp/firmament-official.jar Firmament-refmap.json > /tmp/Firmament-refmap.json
+                    test -s /tmp/Firmament-refmap.json
+
+                    for jar in build/libs/Firmament-*.jar; do
+                        zip -j "$jar" /tmp/Firmament-refmap.json
+                        unzip -l "$jar" | grep -F 'Firmament-refmap.json'
+                    done
+
                     sha256sum build/libs/*.jar
             -   name: Upload build artifact
                 uses: actions/upload-artifact@v4
